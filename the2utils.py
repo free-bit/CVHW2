@@ -25,7 +25,6 @@ class CustomFormatter(argparse.HelpFormatter):
             parts = []
             if action.nargs == 0:
                 parts.extend(action.option_strings)
-
             else:
                 default = action.dest.upper()
                 args_string = self._format_args(action, default)
@@ -43,7 +42,6 @@ def arg_handler():
     group = parser.add_argument_group(title='required arguments')
     group.add_argument("-rf", "--readfolder",  help="Directory of input files", metavar=("FOLDER"), type=str)
     args = parser.parse_args()
-    
     # Checking args
     if args.help:
         parser.print_help()    
@@ -55,8 +53,8 @@ def arg_handler():
 # Read an image and return numpy array for color and grayscale
 def read_image(path):
     image = Image.open(path)
-    color=np.array(image.convert(mode='RGB'))
-    gray=np.array(image.convert(mode='L'))
+    color = np.array(image.convert(mode='RGB'))
+    gray = np.array(image.convert(mode='L'))
     return (color, gray)
 
 # Show a grayscale image
@@ -74,3 +72,11 @@ def show_color(image2D):
         plt.show()
     else:
         print("2D grayscale image is expected")
+
+# Get euclidean distance between two feature vectors (n x m)
+# axis = None: sum all values, return one value
+# axis = 0   : sum values vertically, return m-many values
+# axis = 1   : sum values horizontally, return n-many values
+def euclidean_distance(vec1, vec2, axis=None):
+    distance = np.sqrt(np.sum((vec1 - vec2)**2, axis=axis))
+    return distance
