@@ -8,13 +8,19 @@ import numpy as np
 # Local imports
 from PIL import Image
 
+# Constants
+PIPE_MODES = {
+    "extract": False,
+    "query": False
+}
+
 # Custom format for arg Help print
 class CustomFormatter(argparse.HelpFormatter):
     def __init__(self,
                  prog,
                  indent_increment=2,
                  max_help_position=100, # Modified
-                 width=None):
+                 width=200):
         super().__init__(prog, indent_increment, max_help_position, width)
 
     def _format_action_invocation(self, action):
@@ -33,22 +39,51 @@ class CustomFormatter(argparse.HelpFormatter):
                 parts[-1] += ' %s' % args_string
             return ', '.join(parts)
 
+def check_positive(value):
+    try:
+        value = int(value)
+        assert (value > 0)
+    except Exception as e:
+        raise argparse.ArgumentTypeError("Positive integer is expected but got: {}".format(value))
+    return value
+
+def check_path(path):
+    if (path[-1] != "/"):
+        path += "/"
+    return path
+
 # Handles cmd args
 def arg_handler():
     parser = argparse.ArgumentParser(description='Bag of Visual Words', 
                                      formatter_class=CustomFormatter, 
                                      add_help=False)
     parser.add_argument("-h", "--help", help="Help message", action="store_true")
+    parser.add_argument("--save",  help="Save all outputs", 
+                       default=False, action="store_true")
+    parser.add_argument("--show",  help="Show images found", 
+                       default=False, action="store_true")
+                       
     group = parser.add_argument_group(title='required arguments')
-    group.add_argument("-rf", "--readfolder",  help="Directory of input files", metavar=("FOLDER"), type=str)
+    group.add_argument("-rf", "--readfolder",  help="Directory of input files", 
+                       metavar="FOLDER", type=check_path, required=True)
+    group.add_argument("-c", "--filecount",  help="Number of input files to be sampled", 
+                       metavar="COUNT", type=check_positive, required=True)
+    group.add_argument("-p", "--pipemode",  help="Specify pipeline execution mode: \
+                       (extract|query|all)", metavar="MODE", type=str, required=True)
     args = parser.parse_args()
-    # Checking args
-    if args.help:
-        parser.print_help()    
-    if args.readfolder:
-        return args
 
-    return None
+    if args.help:
+        parser.print_help()
+    
+    # Update pipeline flags
+    args.pipemode = args.pipemode.lower()
+    if (args.pipemode == "all"):
+        PIPE_MODES["extract"] = True
+        PIPE_MODES["query"] = True
+    else:
+        PIPE_MODES[args.pipemode] = True
+
+    return args
 
 # Read an image and return numpy array for color and grayscale
 def read_image(path):
