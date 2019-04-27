@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 # Standard library imports
+from collections import Counter
 import os
 import re
 import time
@@ -10,6 +11,7 @@ from cyvlfeat.sift import dsift, sift
 from cyvlfeat.kmeans import kmeans # TODO: tmp
 from sklearn.cluster import KMeans
 from sklearn.neighbors import KNeighborsRegressor # TODO: tmp
+from sklearn.metrics import accuracy_score
 
 # Local imports
 from the2utils import *
@@ -22,7 +24,7 @@ ARGS = None
 rxp_label = r'^.*/(.*)/\d*\.\w*$'
 parse_label = lambda path : re.search(rxp_label, path).group(1)
 
-# Create a vectorized function
+# Vectorized version
 vectorized_parse_label = np.vectorize(parse_label)
 
 # TESTED
@@ -106,7 +108,7 @@ def get_descriptors(file_names, **kwargs):
 
 # TESTED
 def find_k_nearest(query_bovws, other_bovws, k):
-    """Find k-Nearest BoVWs from the database for one or more queries"""
+    """Find indices of images with k-Nearest BoVWs from the database for one or more queries"""
     distances = np.apply_along_axis(lambda x: euclidean_distance(x, other_bovws, 1), 1, query_bovws)
     k_indices = np.apply_along_axis(np.argsort, 1, distances)[:, :k]
     # Select values in given indices row by row
@@ -114,6 +116,25 @@ def find_k_nearest(query_bovws, other_bovws, k):
     for i in range(distances.shape[0]):
         selected_dist = np.vstack((selected_dist, distances[i, k_indices[i]]))
     return k_indices, selected_dist
+
+# TESTED
+def find_accuracy(test_paths, train_paths, indices):
+    """
+    Get ground truth and test labels.
+    Perform majority voting by using labels indicated by indices to decide the label.
+    In case of a tie get the minimum distanced label. (Counter class enables this behaviour.)
+    Calculate and return accuracy.
+    """
+    true_labels = vectorized_parse_label(test_paths)
+    all_train_labels = vectorized_parse_label(train_paths)
+    n_row, n_col = indices.shape
+    pred_labels = np.empty((0, n_col))
+    for i in range(n_row):
+        pred_labels = np.vstack((pred_labels, all_train_labels[indices[i]]))
+    counters = np.apply_along_axis(Counter, 1, pred_labels)
+    top_voted = [counted.most_common(1)[0][0] for counted in counters]
+    accuracy = accuracy_score(true_labels, top_voted)
+    return accuracy
 
 # TESTED
 def save_bovws(path_to_save, file_names, bovws):
