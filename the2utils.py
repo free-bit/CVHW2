@@ -10,7 +10,7 @@ import numpy as np
 from PIL import Image
 
 # Constants
-PIPE_MODES = {
+PIPE_MODE = {
     "train": False,
     "test": False
 }
@@ -69,17 +69,21 @@ def arg_handler():
                        default=False, action="store_true")
     enable_pipe = ("-h" not in sys.argv) and ("--help" not in sys.argv) \
                   and ("--debug" not in sys.argv)
+    enable_train = ("train" in sys.argv) or ("both" in sys.argv)
+    enable_test = ("test" in sys.argv) or ("both" in sys.argv)
     group = parser.add_argument_group(title='required arguments')
 
     # Input execution mode for the pipeline
     group.add_argument("-p", "--pipemode",  help="Specify pipeline execution mode",
                        choices=['train', 'test', 'both'], required=enable_pipe, type=str)
+    group.add_argument("-k", "--clusters",  help="Number of clusters (vocabulary size)", 
+                       metavar="COUNT", type=check_positive, required=enable_train)
     group.add_argument("-c", "--filecount",  help="Number of input files to be sampled", 
-                       metavar="COUNT", type=check_positive, required=("train" in sys.argv))
+                       metavar="COUNT", type=check_positive, default=None)
     group.add_argument("--trainfolder",  help="Top level directory of training files", 
-                       metavar="FOLDER", type=check_path, required=("train" in sys.argv))
+                       metavar="FOLDER", type=check_path, required=enable_train)
     group.add_argument("--testfolder",  help="Top level directory of test files", 
-                       metavar="FOLDER", type=check_path, required=("test" in sys.argv))
+                       metavar="FOLDER", type=check_path, required=enable_test)
     args = parser.parse_args()
     # Print help if -h is used
     if args.help:
@@ -91,19 +95,18 @@ def arg_handler():
         return
 
     # Update pipeline flags accordingly
-    args.pipemode = args.pipemode.lower()
-    if (args.pipemode == "all"):
-        PIPE_MODES["train"] = True
-        PIPE_MODES["test"] = True
-    else:
-        PIPE_MODES[args.pipemode] = True
+    PIPE_MODE["train"] = enable_train
+    PIPE_MODE["test"] = enable_test
 
     return args
 
 # Read an image and return numpy array for color and grayscale
-def read_image(path):
+def read_image(path, **kwargs):
+    read_color = kwargs.get('read_color', False)
     image = Image.open(path)
-    color = np.array(image.convert(mode='RGB'))
+    color = None
+    if(read_color):
+        color = np.array(image.convert(mode='RGB'))
     gray = np.array(image.convert(mode='L'))
     return (color, gray)
 
@@ -130,3 +133,9 @@ def show_color(image2D):
 def euclidean_distance(vec1, vec2, axis=None):
     distance = np.sqrt(np.sum((vec1 - vec2)**2, axis=axis))
     return distance
+
+# Normalize each row vector in the matrix
+def l1_normalize(vec, axis=1):
+    norm = np.linalg.norm(vec, ord=1, axis=axis)
+    norm = norm.reshape((-1, 1))
+    return vec/norm

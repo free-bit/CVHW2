@@ -14,16 +14,28 @@ from sklearn.neighbors import KNeighborsRegressor # TODO: tmp
 # Local imports
 from the2utils import *
 
-# Tested
+# Global variables
+ARGS = None
+
+# TESTED
+# Per item function to find label
+rxp_label = r'^.*/(.*)/\d*\.\w*$'
+parse_label = lambda path : re.search(rxp_label, path).group(1)
+
+# Create a vectorized function
+vectorized_parse_label = np.vectorize(parse_label)
+
+# TESTED
 def sample_files(files, n):
-    """Shuffle the list and return n random values"""
+    """Shuffle the list and return n random choices as list"""
     if (not n or (n >= len(files))):
         return files
-    shuffled = np.random.shuffle(files)
+    # Perform shuffling in-place
+    np.random.shuffle(files)
     choices = np.random.choice(files, n, replace=False)
-    return choices
+    return list(choices)
 
-# Tested
+# TESTED
 def get_file_paths(folder, n=None):
     """
     Find all files under given path in the form of: 
@@ -33,6 +45,7 @@ def get_file_paths(folder, n=None):
     ...
     - folderN:
             - images
+    Returns list of file paths
     """
     file_paths = []
     subfolders = os.listdir(folder)
@@ -52,6 +65,7 @@ def get_SIFT_descriptor(image2D, **kwargs):
     dense: Apply d-SIFT (Default: True)
     float: Descriptor are returned in floating point (Default: False)
     fast: Fast approximation for d-SIFT (Default: False)
+    Returns np.array
     """
     dense = kwargs.get('dense', True)
     float = kwargs.get('float', False)
@@ -70,61 +84,93 @@ def get_descriptors(file_names, **kwargs):
     """
     t1 = time.time()
     descrs = np.empty(shape=(0, 128))
-    print("Total number of files to be processed:", len(file_names))
+    total = len(file_names)
+    print("Total number of files to be processed:", total)
     slices = [0]
+    # Use for percentage calculations
+    percentage = kwargs.get('percentage', 10)
+    count = 0
+    step = total / percentage
     for file in file_names:
-        _, gray = read_image(file)
+        _, gray = read_image(file, read_color=False)
         extracted = get_SIFT_descriptor(gray, **kwargs)
         descrs = np.vstack((descrs, extracted))
         slices.append(descrs.shape[0])
+        # Notify every X%
+        count += 1
+        if (count % step == 0):
+            print("{}%".format(count*percentage/step))
     t2 = time.time()
-    print("Time elapsed:", t2-t1)
+    print("Completed. Time elapsed:", t2-t1)
     return (descrs, slices)
 
-# Tested
-def find_k_nearest(query_bovw, other_bovws, k):
-    """Find k-Nearest BoVWs from the database for a particular query"""
-    distances = euclidean_distance(query_bovw, other_bovws, 1)
-    k_indices = np.argsort(distances)[:k]
-    return distances[k_indices]
+# TESTED
+def find_k_nearest(query_bovws, other_bovws, k):
+    """Find k-Nearest BoVWs from the database for one or more queries"""
+    distances = np.apply_along_axis(lambda x: euclidean_distance(x, other_bovws, 1), 1, query_bovws)
+    k_indices = np.apply_along_axis(np.argsort, 1, distances)[:, :k]
+    # Select values in given indices row by row
+    selected_dist = np.empty((0, k))
+    for i in range(distances.shape[0]):
+        selected_dist = np.vstack((selected_dist, distances[i, k_indices[i]]))
+    return k_indices, selected_dist
 
-# Tested
-def save_file(path_to_save, sample_names, bovws, slices):
+# TESTED
+def save_bovws(path_to_save, file_names, bovws):
     with open(path_to_save, "w+") as file:
-        for i in range(len(sample_names)):
-            np.savetxt(file, bovws[slices[i]:slices[i+1]], header=sample_names[i])
-
-# TODO: Incomplete
-def read_file(path_to_read):
-    rxp_varname = r'^(?:# (.*))$'
-    var_names = []
-    values = []
+        for i in range(len(file_names)):
+            np.savetxt(file, bovws[i], header=file_names[i])
+# TESTED
+def save_centers(path_to_save, centers):
+    with open(path_to_save, "w+") as file:
+        header = "Cluster centers:"
+        np.savetxt(file, centers, header=header)
+# TESTED
+def save_inv_indices(path_to_save, inv_indices):
+    with open(path_to_save, "w+") as file:
+        header = "# Inverted indices:\n"
+        file.write(header)
+        for cluster in inv_indices:
+            np.savetxt(file, cluster, fmt="%d")
+# TESTED
+def read_bovws(path_to_read):
+    """Read a file containing descriptors, returns name and matrix pairs as dict"""
+    rxp_file_name = r'^(?:# (.*))$'
+    file_names = []
+    bovws = []
     with open(path_to_read, "r") as file:
-        index = -1
         line = file.readline()
+        bovw = None
         while (line):
             if (line[0] == "#"):
-                var_names.append(re.findall(rxp_varname, line))
-                values.append(str())
-                index += 1
+                file_name = re.search(rxp_file_name, line).group(1)
+                file_names.append(file_name)
+                bovws.append(str())
             else:
-                values[index] += line
+                bovws[-1] += line
             line = file.readline()
-    print(var_names)
-    for value in values:
-        value = np.fromstring(value, sep=' ')
-        print(value)
+    # Convert strings to numpy arrays
+    for i in range(len(bovws)):
+        bovws[i] = np.fromstring(bovws[i], sep='\n')
+    bovws = np.array(bovws)
+    return file_names, bovws
 
 def show_results():
     pass
 
-def find_bovws(descrs, vocab):
+def find_bovws(descrs, slices, vocab):
     """Find BoVW representation of descriptors from one or more image"""
     k = vocab.n_clusters
+    # Get cluster index of each row descriptor vector and convert it to a row vector
     cluster_indices = vocab.predict(descrs)
-    # Get bincount for each row (i.e. every sample) in the matrix
-    bovws = np.apply_along_axis(lambda x: np.bincount(x, minlength=k), 1, cluster_indices)
-    return bovws
+    # Each bovw row vector will have k columns
+    bovws = np.empty(shape=(0, k))
+    for i in range(len(slices)-1):
+        ci = cluster_indices[slices[i] : slices[i+1]]
+        bovw = np.bincount(ci, minlength=k)
+        bovws = np.vstack((bovws, bovw))
+    # Normalize each row vector
+    return l1_normalize(bovws)
 
 def build_vocab(descrs, k):
     """
@@ -140,26 +186,46 @@ def build_vocab(descrs, k):
     for c_index in range(k):
         inv_indices[c_index] = np.where(clusters.labels_ == c_index)
     clusters.inv_indices_ = inv_indices
+    # TODO: Remove unused variable
+    # del clusters.labels_
     return clusters
 
-def execute_pipeline(args):
+def execute_pipeline():
     global PIPE_MODE 
-    k=5 # TODO: hyperparameter from input file
     if (PIPE_MODE["train"]):
-        # Get file paths
-        file_paths = get_file_paths(args.trainfolder, args.filecount)
+        # Get file paths (select c-many files randomly)
+        print("Getting file paths (select c-many files randomly)") #TODO: remove
+        file_paths = get_file_paths(ARGS.trainfolder, ARGS.filecount)
+        print("Count:", len(file_paths)) #TODO: remove
+        input("Proceed?\n") #TODO: remove
+        
         # Extract descriptors of training images
+        print("Extracting descriptors of training images") #TODO: remove
         descrs, slices = get_descriptors(file_paths)
+        print("Descrs size:", descrs.shape) #TODO: remove
+        print("Slices size:", len(slices)) #TODO: remove
+        input("Proceed?\n") #TODO: remove
+        
         # Build vocabulary from training images
-        vocab = build_vocab(descrs, k)
+        vocab = build_vocab(descrs, ARGS.clusters)
+        print("Vocab size: ", vocab.n_clusters) #TODO: remove
+        input("Proceed?\n") #TODO: remove
+
         # Get BoVW representation of all sampled training images
-        train_bovws = find_bovws(descrs, vocab)
-        if (args.save):
-            pass # TODO:
-            # save_file()
+        train_bovws = find_bovws(descrs, slices, vocab)
+        print("bovws size: ", train_bovws.shape) #TODO: remove
+        input("Proceed?\n") #TODO: remove
+
+        # Save results
+        if (ARGS.save):
+            save_bovws("bovws.txt", file_paths, train_bovws)
+            save_centers("centers.txt", vocab.cluster_centers_)
+            save_inv_indices("indices.txt", vocab.inv_indices_)
+
+    # TODO: Check later
     if (PIPE_MODE["test"]):
         # Extract descriptors of test images
-        file_paths = get_file_paths(args.testfolder)
+        file_paths = get_file_paths(ARGS.testfolder)
         # Extract descriptors of test images
         descrs, slices = get_descriptors(file_paths)
         # Get BoVW representation of test images
@@ -167,17 +233,33 @@ def execute_pipeline(args):
         # Find k nearest neighbours
         find_k_nearest(test_bovws, train_bovws, k)
         # Show results
-        if args.show:
+        if ARGS.show:
             show_results()
 
+def get_current_config():
+    """Return a string indicating current parameter configuration"""
+    config = vars(ARGS)
+    message = "\nRunning with the following parameter settings:\n"
+    separator = "-" * len(message) + "\n"
+    lines = ""
+    for item, key in config.items():
+        lines += "{}: {}\n".format(item, key)
+    return (message + separator + lines + separator) 
+
+def show_current_config():
+    """Print current parameter configuration"""
+    print(get_current_config())
+
 def main():
-    args = arg_handler()
-    if args:
-        print(args)
-        # execute_pipeline(args)
+    global ARGS
+    ARGS = arg_handler()
+    # If required args are parsed properly
+    if ARGS:
+        show_current_config()
+        execute_pipeline()
     # Debugging
     else:
-        read_file("test.txt")
+        read_bovws("test.txt")
 
 if __name__ == "__main__":
     main()
