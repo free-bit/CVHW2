@@ -2,6 +2,7 @@
 
 # Standard library imports
 import os
+import re
 import time
 
 # Related third party imports
@@ -13,15 +14,17 @@ from sklearn.neighbors import KNeighborsRegressor # TODO: tmp
 # Local imports
 from the2utils import *
 
+# Tested
 def sample_files(files, n):
     """Shuffle the list and return n random values"""
-    if (n >= len(files)):
+    if (not n or (n >= len(files))):
         return files
     shuffled = np.random.shuffle(files)
     choices = np.random.choice(files, n, replace=False)
     return choices
 
-def get_file_paths(folder, n):
+# Tested
+def get_file_paths(folder, n=None):
     """
     Find all files under given path in the form of: 
     folder
@@ -78,19 +81,39 @@ def get_descriptors(file_names, **kwargs):
     print("Time elapsed:", t2-t1)
     return (descrs, slices)
 
-# Find k-Nearest BoVWs from the database for a particular query
+# Tested
 def find_k_nearest(query_bovw, other_bovws, k):
+    """Find k-Nearest BoVWs from the database for a particular query"""
     distances = euclidean_distance(query_bovw, other_bovws, 1)
     k_indices = np.argsort(distances)[:k]
     return distances[k_indices]
 
+# Tested
 def save_file(path_to_save, sample_names, bovws, slices):
     with open(path_to_save, "w+") as file:
         for i in range(len(sample_names)):
             np.savetxt(file, bovws[slices[i]:slices[i+1]], header=sample_names[i])
 
-def read_file():
-    pass
+# TODO: Incomplete
+def read_file(path_to_read):
+    rxp_varname = r'^(?:# (.*))$'
+    var_names = []
+    values = []
+    with open(path_to_read, "r") as file:
+        index = -1
+        line = file.readline()
+        while (line):
+            if (line[0] == "#"):
+                var_names.append(re.findall(rxp_varname, line))
+                values.append(str())
+                index += 1
+            else:
+                values[index] += line
+            line = file.readline()
+    print(var_names)
+    for value in values:
+        value = np.fromstring(value, sep=' ')
+        print(value)
 
 def show_results():
     pass
@@ -102,12 +125,6 @@ def find_bovws(descrs, vocab):
     # Get bincount for each row (i.e. every sample) in the matrix
     bovws = np.apply_along_axis(lambda x: np.bincount(x, minlength=k), 1, cluster_indices)
     return bovws
-
-def perform_query(args):
-    pass
-    # Get descriptor of query image
-    # Get BoVW of query image
-    # Find k nearest neighbours
 
 def build_vocab(descrs, k):
     """
@@ -128,28 +145,39 @@ def build_vocab(descrs, k):
 def execute_pipeline(args):
     global PIPE_MODE 
     k=5 # TODO: hyperparameter from input file
-    if (PIPE_MODE["extract"]):
+    if (PIPE_MODE["train"]):
         # Get file paths
-        file_paths = get_file_paths(args.readfolder, args.filecount)
-        # Extract descriptors
+        file_paths = get_file_paths(args.trainfolder, args.filecount)
+        # Extract descriptors of training images
         descrs, slices = get_descriptors(file_paths)
-        # Build vocabulary
+        # Build vocabulary from training images
         vocab = build_vocab(descrs, k)
-        # Get BoVW representation of all sample images
-        find_bovws(descrs, vocab)
+        # Get BoVW representation of all sampled training images
+        train_bovws = find_bovws(descrs, vocab)
         if (args.save):
             pass # TODO:
             # save_file()
-    if (PIPE_MODE["query"]):
-        perform_query(args)
+    if (PIPE_MODE["test"]):
+        # Extract descriptors of test images
+        file_paths = get_file_paths(args.testfolder)
+        # Extract descriptors of test images
+        descrs, slices = get_descriptors(file_paths)
+        # Get BoVW representation of test images
+        test_bovws = find_bovws(descrs, vocab)
+        # Find k nearest neighbours
+        find_k_nearest(test_bovws, train_bovws, k)
         # Show results
         if args.show:
             show_results()
 
 def main():
     args = arg_handler()
-    print(args)
-    # execute_pipeline(args)
+    if args:
+        print(args)
+        # execute_pipeline(args)
+    # Debugging
+    else:
+        read_file("test.txt")
 
 if __name__ == "__main__":
     main()

@@ -1,5 +1,6 @@
 # Standard library imports
 import argparse
+import sys
 
 # Related third party imports
 import matplotlib.pyplot as plt
@@ -10,8 +11,8 @@ from PIL import Image
 
 # Constants
 PIPE_MODES = {
-    "extract": False,
-    "query": False
+    "train": False,
+    "test": False
 }
 
 # Custom format for arg Help print
@@ -58,28 +59,42 @@ def arg_handler():
                                      formatter_class=CustomFormatter, 
                                      add_help=False)
     parser.add_argument("-h", "--help", help="Help message", action="store_true")
+
+    # Debug mode (ignore all flags and run the script)
+    parser.add_argument("--debug", help="Debug (disable all flag checks)",
+                        default=False, action="store_true")
     parser.add_argument("--save",  help="Save all outputs", 
                        default=False, action="store_true")
     parser.add_argument("--show",  help="Show images found", 
                        default=False, action="store_true")
-                       
+    enable_pipe = ("-h" not in sys.argv) and ("--help" not in sys.argv) \
+                  and ("--debug" not in sys.argv)
     group = parser.add_argument_group(title='required arguments')
-    group.add_argument("-rf", "--readfolder",  help="Directory of input files", 
-                       metavar="FOLDER", type=check_path, required=True)
-    group.add_argument("-c", "--filecount",  help="Number of input files to be sampled", 
-                       metavar="COUNT", type=check_positive, required=True)
-    group.add_argument("-p", "--pipemode",  help="Specify pipeline execution mode: \
-                       (extract|query|all)", metavar="MODE", type=str, required=True)
-    args = parser.parse_args()
 
+    # Input execution mode for the pipeline
+    group.add_argument("-p", "--pipemode",  help="Specify pipeline execution mode",
+                       choices=['train', 'test', 'both'], required=enable_pipe, type=str)
+    group.add_argument("-c", "--filecount",  help="Number of input files to be sampled", 
+                       metavar="COUNT", type=check_positive, required=("train" in sys.argv))
+    group.add_argument("--trainfolder",  help="Top level directory of training files", 
+                       metavar="FOLDER", type=check_path, required=("train" in sys.argv))
+    group.add_argument("--testfolder",  help="Top level directory of test files", 
+                       metavar="FOLDER", type=check_path, required=("test" in sys.argv))
+    args = parser.parse_args()
+    # Print help if -h is used
     if args.help:
         parser.print_help()
-    
-    # Update pipeline flags
+        return
+
+    # In case of debugging ignore all flags
+    if args.debug:
+        return
+
+    # Update pipeline flags accordingly
     args.pipemode = args.pipemode.lower()
     if (args.pipemode == "all"):
-        PIPE_MODES["extract"] = True
-        PIPE_MODES["query"] = True
+        PIPE_MODES["train"] = True
+        PIPE_MODES["test"] = True
     else:
         PIPE_MODES[args.pipemode] = True
 
