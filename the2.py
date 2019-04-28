@@ -3,20 +3,19 @@
 # Standard library imports
 from collections import Counter
 import os
-import re
 import time
 
 # Related third party imports
 from cyvlfeat.sift import dsift, sift
 from cyvlfeat.kmeans import kmeans # TODO: tmp
 from sklearn.cluster import KMeans
+from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.neighbors import KNeighborsRegressor # TODO: tmp
-from sklearn.metrics import accuracy_score
 
 # Local imports
 from the2utils import *
 
-# Global variables
+# Constants & global variables
 ARGS = None
 
 # TESTED
@@ -70,13 +69,21 @@ def get_SIFT_descriptor(image2D, **kwargs):
     Returns np.array
     """
     dense = kwargs.get('dense', True)
-    float = kwargs.get('float', False)
     frames = descrs = None
     if dense:
         fast = kwargs.get('fast', False)
-        frames, descrs = dsift(image2D, fast=fast, float_descriptors=float)
+        # print("Using dsift with fast:", fast)
+        frames, descrs = dsift(image2D, fast=fast) # Might be useful: verbose=False
     else:
-        frames, descrs = sift(image2D, compute_descriptor=True, float_descriptors=float)
+        # print("Using regular sift")
+        frames, descrs = sift(image2D, compute_descriptor=True) # Might be useful: verbose=False
+    # TODO: debugging
+    if(np.any(np.isnan(descrs))):
+        print(descrs)
+        input("NaN detected, proceed?")
+    if(np.any(np.isinf(descrs))):
+        print(descrs)
+        input("inf detected, proceed?")
     return descrs
 
 def get_descriptors(file_names, **kwargs):
@@ -85,14 +92,15 @@ def get_descriptors(file_names, **kwargs):
     Return descriptors and slices (to maintain descriptor-owner relation)
     """
     t1 = time.time()
-    descrs = np.empty(shape=(0, 128))
+    descrs = np.empty(shape=(0, 128), dtype='Float32')
     total = len(file_names)
+    print("Extracting features:")
     print("Total number of files to be processed:", total)
     slices = [0]
     # Use for percentage calculations
-    percentage = kwargs.get('percentage', 10)
+    percent = kwargs.get('percent', 10)
     count = 0
-    step = total / percentage
+    step = (total * percent) / 100
     for file in file_names:
         _, gray = read_image(file, read_color=False)
         extracted = get_SIFT_descriptor(gray, **kwargs)
@@ -101,9 +109,10 @@ def get_descriptors(file_names, **kwargs):
         # Notify every X%
         count += 1
         if (count % step == 0):
-            print("{}%".format(count*percentage/step))
+            value = (count * percent) / step
+            print("Processed: {}% ({}/{})".format(value, count, total))
     t2 = time.time()
-    print("Completed. Time elapsed:", t2-t1)
+    print("Feature extraction completed. Time elapsed:", t2-t1)
     return (descrs, slices)
 
 # TESTED
@@ -118,63 +127,23 @@ def find_k_nearest(query_bovws, other_bovws, k):
     return k_indices, selected_dist
 
 # TESTED
-def find_accuracy(test_paths, train_paths, indices):
+def find_accuracy(test_labels, train_labels, pred_indices):
     """
     Get ground truth and test labels.
-    Perform majority voting by using labels indicated by indices to decide the label.
+    Perform majority voting by using labels indicated by pred_indices to decide the label.
     In case of a tie get the minimum distanced label. (Counter class enables this behaviour.)
     Calculate and return accuracy.
     """
-    true_labels = vectorized_parse_label(test_paths)
-    all_train_labels = vectorized_parse_label(train_paths)
-    n_row, n_col = indices.shape
+    true_labels = vectorized_parse_label(test_labels)
+    all_train_labels = vectorized_parse_label(train_labels)
+    n_row, n_col = pred_indices.shape
     pred_labels = np.empty((0, n_col))
     for i in range(n_row):
-        pred_labels = np.vstack((pred_labels, all_train_labels[indices[i]]))
+        pred_labels = np.vstack((pred_labels, all_train_labels[pred_indices[i]]))
     counters = np.apply_along_axis(Counter, 1, pred_labels)
     top_voted = [counted.most_common(1)[0][0] for counted in counters]
     accuracy = accuracy_score(true_labels, top_voted)
     return accuracy
-
-# TESTED
-def save_bovws(path_to_save, file_names, bovws):
-    with open(path_to_save, "w+") as file:
-        for i in range(len(file_names)):
-            np.savetxt(file, bovws[i], header=file_names[i])
-# TESTED
-def save_centers(path_to_save, centers):
-    with open(path_to_save, "w+") as file:
-        header = "Cluster centers:"
-        np.savetxt(file, centers, header=header)
-# TESTED
-def save_inv_indices(path_to_save, inv_indices):
-    with open(path_to_save, "w+") as file:
-        header = "# Inverted indices:\n"
-        file.write(header)
-        for cluster in inv_indices:
-            np.savetxt(file, cluster, fmt="%d")
-# TESTED
-def read_bovws(path_to_read):
-    """Read a file containing descriptors, returns name and matrix pairs as dict"""
-    rxp_file_name = r'^(?:# (.*))$'
-    file_names = []
-    bovws = []
-    with open(path_to_read, "r") as file:
-        line = file.readline()
-        bovw = None
-        while (line):
-            if (line[0] == "#"):
-                file_name = re.search(rxp_file_name, line).group(1)
-                file_names.append(file_name)
-                bovws.append(str())
-            else:
-                bovws[-1] += line
-            line = file.readline()
-    # Convert strings to numpy arrays
-    for i in range(len(bovws)):
-        bovws[i] = np.fromstring(bovws[i], sep='\n')
-    bovws = np.array(bovws)
-    return file_names, bovws
 
 def show_results():
     pass
@@ -202,6 +171,8 @@ def build_vocab(descrs, k):
     clusters.labels_: cluster indices of each sample
     inv_indices_:     inverted index to be used in look up
     """
+    print(("Based on features (shape:{}) "+
+           "building vocabulary with size: {}").format(descrs.shape, k))
     clusters = KMeans(n_clusters=k).fit(descrs) # sample_weight, get_params
     inv_indices = [None] * k
     for c_index in range(k):
@@ -211,60 +182,89 @@ def build_vocab(descrs, k):
     # del clusters.labels_
     return clusters
 
+def train(train_labels, train_descrs, train_slices):
+    # Build vocabulary from training images
+    vocab = build_vocab(train_descrs, ARGS.clusters)
+    # print("Vocab size: ", vocab.n_clusters) #TODO: remove
+    # input("Proceed?\n") #TODO: remove
+
+    # Get BoVW representation of all sampled training images
+    train_bovws = find_bovws(train_descrs, train_slices, vocab)
+    # print("bovws size: ", train_bovws.shape) #TODO: remove
+    # input("Proceed?\n") #TODO: remove
+
+    # Save results
+    if (ARGS.save):
+        save_bovws("bovws.txt", train_labels, train_bovws)
+        # save_centers("centers.txt", vocab.cluster_centers_)
+        # save_inv_indices("indices.txt", vocab.inv_indices_)
+    return train_bovws
+
+def test(test_labels, test_descrs, test_slices, train_labels, train_bovws):
+    # Get BoVW representation of test images
+    test_bovws = find_bovws(test_descrs, test_slices, vocab)
+    # Find k nearest neighbours
+    pred_indices, selected_dist = find_k_nearest(test_bovws, train_bovws, k)
+    # Calculate accuracy
+    score = find_accuracy(test_labels, train_labels, pred_indices)
+    # Show results
+    if ARGS.show:
+        show_results()
+    return score
+
+def x_validate(labels, descrs, slices):
+    # Get folds
+    label_folds = np.array_split(labels, ARGS.fold)
+    descr_folds = np.array_split(descrs, ARGS.fold)
+    # In each iteration pick one fold as test and the rest as training data 
+    for i in range(len(folds)):
+        # Build model on training folds
+        train_labels = np.concatenate((*label_folds[:i], *label_folds[i+1:]))
+        train_descrs = np.concatenate((*descr_folds[:i], *descr_folds[i+1:]))
+        train(train_labels, train_descrs, slices)
+        # Test on test folds
+        test_labels = label_folds[i]
+        test_descrs = descr_folds[i]
+        test(test_labels, test_descrs, slices)
+
 def execute_pipeline():
-    global PIPE_MODE 
+    global PIPE_MODE
+    # If train mode enabled
     if (PIPE_MODE["train"]):
-        # Get file paths (select c-many files randomly)
-        print("Getting file paths (select c-many files randomly)") #TODO: remove
-        file_paths = get_file_paths(ARGS.trainfolder, ARGS.filecount)
-        print("Count:", len(file_paths)) #TODO: remove
-        input("Proceed?\n") #TODO: remove
-        
+        # Get train file paths (select c-many files randomly)
+        train_file_paths = get_file_paths(ARGS.trainfolder, ARGS.filecount)
         # Extract descriptors of training images
-        print("Extracting descriptors of training images") #TODO: remove
-        descrs, slices = get_descriptors(file_paths)
-        print("Descrs size:", descrs.shape) #TODO: remove
-        print("Slices size:", len(slices)) #TODO: remove
-        input("Proceed?\n") #TODO: remove
-        
-        # Build vocabulary from training images
-        vocab = build_vocab(descrs, ARGS.clusters)
-        print("Vocab size: ", vocab.n_clusters) #TODO: remove
-        input("Proceed?\n") #TODO: remove
+        descrs, slices = get_descriptors(train_file_paths, dense=ARGS.dense, 
+                                         fast=ARGS.fast, percent=ARGS.percent)
+        # If cross validation mode enabled
+        if (PIPE_MODE["x_valid"]):
+            print("Training with cross validation on data under {}".format(ARGS.trainfolder))
+            x_validate(train_file_paths, descrs, slices)
+        # Otherwise perform training without folds
+        else:
+            print("Training on data under {}".format(ARGS.trainfolder))
+            train_bovws = train(train_file_paths, descrs, slices)
 
-        # Get BoVW representation of all sampled training images
-        train_bovws = find_bovws(descrs, slices, vocab)
-        print("bovws size: ", train_bovws.shape) #TODO: remove
-        input("Proceed?\n") #TODO: remove
-
-        # Save results
-        if (ARGS.save):
-            save_bovws("bovws.txt", file_paths, train_bovws)
-            save_centers("centers.txt", vocab.cluster_centers_)
-            save_inv_indices("indices.txt", vocab.inv_indices_)
-
-    # TODO: Check later
+    # If test mode enabled
     if (PIPE_MODE["test"]):
+        print("Testing on data under {}".format(ARGS.testfolder))
         # Extract descriptors of test images
-        file_paths = get_file_paths(ARGS.testfolder)
-        # Extract descriptors of test images
-        descrs, slices = get_descriptors(file_paths)
-        # Get BoVW representation of test images
-        test_bovws = find_bovws(descrs, vocab)
-        # Find k nearest neighbours
-        find_k_nearest(test_bovws, train_bovws, k)
-        # Show results
-        if ARGS.show:
-            show_results()
+        test_file_paths = get_file_paths(ARGS.testfolder)
+        # Extract descriptors of training images
+        descrs, slices = get_descriptors(test_file_paths, dense=ARGS.dense, 
+                                         fast=ARGS.fast, percent=ARGS.percent)
+        score = test(test_file_paths, descrs, slices)
+        print("Score achieved:", score)
 
 def get_current_config():
+    global ARGS
     """Return a string indicating current parameter configuration"""
     config = vars(ARGS)
     message = "\nRunning with the following parameter settings:\n"
-    separator = "-" * len(message) + "\n"
+    separator = "-" * (len(message)-2) + "\n"
     lines = ""
     for item, key in config.items():
-        lines += "{}: {}\n".format(item, key)
+        lines += "- {}: {}\n".format(item, key)
     return (message + separator + lines + separator) 
 
 def show_current_config():
@@ -280,7 +280,7 @@ def main():
         execute_pipeline()
     # Debugging
     else:
-        read_bovws("test.txt")
+        pass
 
 if __name__ == "__main__":
     main()
