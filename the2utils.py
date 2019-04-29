@@ -6,6 +6,7 @@ import sys
 # Related third party imports
 import matplotlib.pyplot as plt
 import numpy as np
+from sklearn.cluster import KMeans
 
 # Local imports
 from PIL import Image
@@ -16,6 +17,13 @@ PIPE_MODE = {
     "x_valid": False,
     "test": False
 }
+
+# Disable multiple occurences of the same flag
+class UniqueStore(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string):
+        if getattr(namespace, self.dest, self.default) is not None:
+            parser.error(option_string + " appears several times.")
+        setattr(namespace, self.dest, values)
 
 # Custom format for arg Help print
 class CustomFormatter(argparse.HelpFormatter):
@@ -87,20 +95,20 @@ def arg_handler():
     # Logic for flags
     enable_exec = ("-h" not in sys.argv) and ("--help" not in sys.argv) \
                   and ("--debug" not in sys.argv)
-    enable_full = ("full" in sys.argv)
-    enable_train_only = ("train" in sys.argv)
-    enable_test_only = ("test" in sys.argv)
+    enable_full = enable_exec and ("full" in sys.argv)
+    enable_train_only = enable_exec and ("train" in sys.argv)
+    enable_test_only = enable_exec and ("test" in sys.argv)
     # Determine the exact mode (TODO: Test)
-    enable_x_valid = enable_exec and (not enable_full) and (not enable_test_only)\
-                     and enable_train_only and ("-nf" in sys.argv) or ("--fold" in sys.argv)
-    enable_train = enable_exec and (enable_train_only or enable_full)
-    enable_test = enable_exec and (not enable_x_valid) and (enable_test_only or enable_full)
+    enable_x_valid = (not enable_full) and (not enable_test_only)\
+                      and enable_train_only and ("-nf" in sys.argv or "--fold" in sys.argv)
+    enable_train = (enable_train_only or enable_full)
+    enable_test = (not enable_x_valid) and (enable_test_only or enable_full)
 
     group = parser.add_argument_group(title='required arguments')
 
     # Execution mode for the pipeline
-    group.add_argument("-p", "--pipemode",  help="Specify pipeline execution mode",
-                       choices=['train', 'test', 'full'], required=enable_exec, type=str)
+    group.add_argument("-p", "--pipemode",  help="Specify pipeline execution mode", type=str,
+                       choices=['train', 'test', 'full'], required=enable_exec, action=UniqueStore)
     # Train-specific
     train = parser.add_argument_group(title='train-specific')
     train.add_argument("--trainfolder",  help="Top level directory of training files", 
@@ -115,6 +123,10 @@ def arg_handler():
     test = parser.add_argument_group(title='test-specific')
     test.add_argument("--testfolder",  help="Top level directory of test files", 
                        metavar="FOLDER", type=check_path, required=enable_test)
+    test.add_argument("--bovwfile",  help="Saved BoVW file (required if pipe mode is test)", 
+                       metavar="FILE", required=enable_test_only)
+    test.add_argument("--vocabfile",  help="Saved vocabulary file (required if pipe mode is test)", 
+                       metavar="FILE", required=enable_test_only)
     test.add_argument("-nk", "--knn",  help="k value for kNN", 
                         metavar="COUNT", type=check_positive, required=enable_test)
     args = parser.parse_args()
@@ -182,25 +194,59 @@ def save_bovws(path_to_save, file_names, bovws):
         for i in range(len(file_names)):
             np.savetxt(file, bovws[i], header=file_names[i])
     print("Saved.")
-# TESTED
-def save_centers(path_to_save, centers):
-    print("Saving cluster centers to the file: {}".format(path_to_save))
+
+def save_vocab(path_to_save, vocab):
+    print("Saving vocab to the file: {}".format(path_to_save))
     with open(path_to_save, "w+") as file:
-        header = "Cluster centers:"
-        np.savetxt(file, centers, header=header)
-    print("Saved.")
-# TESTED
-def save_inv_indices(path_to_save, inv_indices):
-    print("Saving inverted indices to the file: {}".format(path_to_save))
-    with open(path_to_save, "w+") as file:
-        header = "# Inverted indices:\n"
+        lines = "# k\n{}\n".format(vocab.n_clusters)
+        file.write(lines)
+        
+        header = "center vectors"
+        np.savetxt(file, vocab.cluster_centers_, header=header)
+        
+        header = "# inverted indices\n"
         file.write(header)
-        for cluster in inv_indices:
-            np.savetxt(file, cluster, fmt="%d")
+        for row in vocab.inv_indices_:
+            np.savetxt(file, row, fmt="%d")
     print("Saved.")
+
+def build_vocab_from_params(k, c_vecs, inv_indices):
+    vocab = KMeans()
+    vocab.n_clusters = k
+    vocab.cluster_centers_ = c_vecs
+    vocab.inv_indices_ = inv_indices
+    return vocab
+
+def read_vocab(path_to_read):
+    """Reads a file containing vocabulary, returns vocab as KMeans object"""
+    with open(path_to_read, "r") as file:
+        # Discard comment
+        file.readline()
+        # Get k
+        k = int(file.readline())
+        print(k)
+
+        # Discard comment
+        file.readline()
+        centers = np.empty((k, 128))
+        # Get cluster centers
+        for i in range(k):
+            row = file.readline()
+            centers[i] = np.fromstring(row, sep=' ')
+        
+        # Discard comment
+        file.readline()
+        # Get inverted indices
+        inv_indices = [None] * k
+        for i in range(k):
+            row = file.readline()
+            inv_indices[i] = np.fromstring(row, sep=' ')
+        # Return KMeans object
+        return build_vocab_from_params(k, centers, inv_indices)
+
 # TESTED
 def read_bovws(path_to_read):
-    """Read a file containing descriptors, returns name and matrix pairs as dict"""
+    """Reads a file containing descriptors, returns name and matrix pairs as tuple"""
     rxp_file_name = r'^(?:# (.*))$'
     file_names = []
     bovws = []
@@ -220,3 +266,20 @@ def read_bovws(path_to_read):
         bovws[i] = np.fromstring(bovws[i], sep='\n')
     bovws = np.array(bovws)
     return file_names, bovws
+
+# UNUSED: TESTED
+def save_centers(path_to_save, centers):
+    print("Saving cluster centers to the file: {}".format(path_to_save))
+    with open(path_to_save, "w+") as file:
+        header = "Cluster centers:"
+        np.savetxt(file, centers, header=header)
+    print("Saved.")
+# UNUSED: TESTED
+def save_inv_indices(path_to_save, inv_indices):
+    print("Saving inverted indices to the file: {}".format(path_to_save))
+    with open(path_to_save, "w+") as file:
+        header = "# Inverted indices:\n"
+        file.write(header)
+        for cluster in inv_indices:
+            np.savetxt(file, cluster, fmt="%d")
+    print("Saved.")

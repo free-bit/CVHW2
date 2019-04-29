@@ -8,7 +8,6 @@ import time
 # Related third party imports
 from cyvlfeat.sift import dsift, sift
 from cyvlfeat.kmeans import kmeans # TODO: tmp
-from sklearn.cluster import KMeans
 from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.neighbors import KNeighborsRegressor # TODO: tmp
 
@@ -179,28 +178,30 @@ def build_vocab(descrs, k):
         inv_indices[c_index] = np.where(clusters.labels_ == c_index)
     clusters.inv_indices_ = inv_indices
     # TODO: Remove unused variable
-    # del clusters.labels_
+    del clusters.labels_
     return clusters
+
+def create_file_name(type, k, filecount):
+    name = "{}_cluster{}_samples{}.txt".format(type, k, filecount)
+    return name
 
 def train(train_labels, train_descrs, train_slices):
     # Build vocabulary from training images
     vocab = build_vocab(train_descrs, ARGS.clusters)
-    # print("Vocab size: ", vocab.n_clusters) #TODO: remove
-    # input("Proceed?\n") #TODO: remove
-
     # Get BoVW representation of all sampled training images
     train_bovws = find_bovws(train_descrs, train_slices, vocab)
-    # print("bovws size: ", train_bovws.shape) #TODO: remove
-    # input("Proceed?\n") #TODO: remove
-
-    # Save results
+    # Save results (if specified)
     if (ARGS.save):
-        save_bovws("bovws.txt", train_labels, train_bovws)
-        # save_centers("centers.txt", vocab.cluster_centers_)
-        # save_inv_indices("indices.txt", vocab.inv_indices_)
+        # Save bovw
+        bovw_name = create_file_name("bovws", ARGS.clusters, train_bovws.shape[0])
+        save_bovws(bovw_name, train_labels, train_bovws)
+        # Save vocab
+        vocab_name = create_file_name("vocab", ARGS.clusters, train_bovws.shape[0])
+        save_vocab(vocab_name, vocab)
+        
     return train_bovws
 
-def test(test_labels, test_descrs, test_slices, train_labels, train_bovws):
+def test(test_labels, test_descrs, test_slices, train_labels, train_bovws, vocab):
     # Get BoVW representation of test images
     test_bovws = find_bovws(test_descrs, test_slices, vocab)
     # Find k nearest neighbours
@@ -229,31 +230,38 @@ def x_validate(labels, descrs, slices):
 
 def execute_pipeline():
     global PIPE_MODE
+    train_labels = None
+    train_bovws = None
+    vocab = None
     # If train mode enabled
     if (PIPE_MODE["train"]):
         # Get train file paths (select c-many files randomly)
-        train_file_paths = get_file_paths(ARGS.trainfolder, ARGS.filecount)
+        train_labels = get_file_paths(ARGS.trainfolder, ARGS.filecount)
         # Extract descriptors of training images
-        descrs, slices = get_descriptors(train_file_paths, dense=ARGS.dense, 
+        descrs, slices = get_descriptors(train_labels, dense=ARGS.dense, 
                                          fast=ARGS.fast, percent=ARGS.percent)
         # If cross validation mode enabled
         if (PIPE_MODE["x_valid"]):
             print("Training with cross validation on data under {}".format(ARGS.trainfolder))
-            x_validate(train_file_paths, descrs, slices)
+            x_validate(train_labels, descrs, slices)
         # Otherwise perform training without folds
         else:
             print("Training on data under {}".format(ARGS.trainfolder))
-            train_bovws = train(train_file_paths, descrs, slices)
+            train_bovws = train(train_labels, descrs, slices)
 
     # If test mode enabled
     if (PIPE_MODE["test"]):
+        if (not train_labels or not train_bovws or not vocab): # TODO: vocab file to read
+            print("Reading BoVW information from file: {}".format(ARGS.bovwfile))
+            train_labels, train_bovws = read_bovws(ARGS.bovwfile)
+            vocab = read_vocab(ARGS.vocabfile)
         print("Testing on data under {}".format(ARGS.testfolder))
         # Extract descriptors of test images
-        test_file_paths = get_file_paths(ARGS.testfolder)
+        test_labels = get_file_paths(ARGS.testfolder)
         # Extract descriptors of training images
-        descrs, slices = get_descriptors(test_file_paths, dense=ARGS.dense, 
+        descrs, slices = get_descriptors(test_labels, dense=ARGS.dense, 
                                          fast=ARGS.fast, percent=ARGS.percent)
-        score = test(test_file_paths, descrs, slices)
+        score = test(test_labels, descrs, slices, train_labels, train_bovws, vocab)
         print("Score achieved:", score)
 
 def get_current_config():
@@ -271,12 +279,26 @@ def show_current_config():
     """Print current parameter configuration"""
     print(get_current_config())
 
+def show_pipe():
+    """Print pipeline modes to be executed"""
+    enum = {True: "Enabled", False: "Disabled"}
+    s1, s2, s3 = enum[PIPE_MODE["train"]], enum[PIPE_MODE["x_valid"]], enum[PIPE_MODE["test"]]
+    message = "Active pipeline modes:\n"
+    separator = "-" * (len(message)-1) + "\n"
+    message = message + separator +\
+              ("1) Train: {}\n\n" +
+               "   - CV : {}\n\n" +
+               "2) Test : {}\n").format(s1, s2, s3) +\
+              separator
+    print(message)
+
 def main():
     global ARGS
     ARGS = arg_handler()
     # If required args are parsed properly
     if ARGS:
         show_current_config()
+        show_pipe()
         execute_pipeline()
     # Debugging
     else:
