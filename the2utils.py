@@ -224,7 +224,6 @@ def read_vocab(path_to_read):
         file.readline()
         # Get k
         k = int(file.readline())
-        print(k)
 
         # Discard comment
         file.readline()

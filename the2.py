@@ -93,8 +93,10 @@ def get_descriptors(file_names, **kwargs):
     t1 = time.time()
     descrs = np.empty(shape=(0, 128), dtype='Float32')
     total = len(file_names)
-    print("Extracting features:")
-    print("Total number of files to be processed:", total)
+    message = "Extracting features:\n"
+    separator = "-" * (len(message)-1) + "\n"
+    info = "Total number of files to be processed: {}\n\nProgress:".format(total)
+    print(message + separator + info)
     slices = [0]
     # Use for percentage calculations
     percent = kwargs.get('percent', 10)
@@ -109,9 +111,11 @@ def get_descriptors(file_names, **kwargs):
         count += 1
         if (count % step == 0):
             value = (count * percent) / step
-            print("Processed: {}% ({}/{})".format(value, count, total))
+            print("- Processed: {}% ({}/{})".format(value, count, total))
     t2 = time.time()
-    print("Feature extraction completed. Time elapsed:", t2-t1)
+    message = "\nFeature extraction completed. Time elapsed: {:.4f}\n".format(t2-t1)
+    separator = "-" * (len(message)-1)
+    print(message + separator)
     return (descrs, slices)
 
 # TESTED
@@ -170,7 +174,7 @@ def build_vocab(descrs, k):
     clusters.labels_: cluster indices of each sample
     inv_indices_:     inverted index to be used in look up
     """
-    print(("Based on features (shape:{}) "+
+    print(("Based on features with shape:{} "+
            "building vocabulary with size: {}").format(descrs.shape, k))
     clusters = KMeans(n_clusters=k).fit(descrs) # sample_weight, get_params
     inv_indices = [None] * k
@@ -179,6 +183,7 @@ def build_vocab(descrs, k):
     clusters.inv_indices_ = inv_indices
     # TODO: Remove unused variable
     del clusters.labels_
+    print("Vocabulary is constructed successfully.")
     return clusters
 
 def create_file_name(type, k, filecount):
@@ -199,13 +204,13 @@ def train(train_labels, train_descrs, train_slices):
         vocab_name = create_file_name("vocab", ARGS.clusters, train_bovws.shape[0])
         save_vocab(vocab_name, vocab)
         
-    return train_bovws
+    return train_bovws, vocab
 
 def test(test_labels, test_descrs, test_slices, train_labels, train_bovws, vocab):
     # Get BoVW representation of test images
     test_bovws = find_bovws(test_descrs, test_slices, vocab)
     # Find k nearest neighbours
-    pred_indices, selected_dist = find_k_nearest(test_bovws, train_bovws, k)
+    pred_indices, selected_dist = find_k_nearest(test_bovws, train_bovws, ARGS.knn)
     # Calculate accuracy
     score = find_accuracy(test_labels, train_labels, pred_indices)
     # Show results
@@ -242,20 +247,27 @@ def execute_pipeline():
                                          fast=ARGS.fast, percent=ARGS.percent)
         # If cross validation mode enabled
         if (PIPE_MODE["x_valid"]):
-            print("Training with cross validation on data under {}".format(ARGS.trainfolder))
+            print("Training with cross validation on data under {}:".format(ARGS.trainfolder))
             x_validate(train_labels, descrs, slices)
         # Otherwise perform training without folds
         else:
-            print("Training on data under {}".format(ARGS.trainfolder))
-            train_bovws = train(train_labels, descrs, slices)
+            message = "\nTraining on data under {}:\n".format(ARGS.trainfolder)
+            separator = "-" * (len(message)-2)
+            print(message + separator)
+            train_bovws, vocab = train(train_labels, descrs, slices)
+            print(separator)
 
     # If test mode enabled
     if (PIPE_MODE["test"]):
-        if (not train_labels or not train_bovws or not vocab): # TODO: vocab file to read
+        read_file = (train_labels is None) or (train_bovws is None) or (vocab is None)
+        if (read_file):
             print("Reading BoVW information from file: {}".format(ARGS.bovwfile))
             train_labels, train_bovws = read_bovws(ARGS.bovwfile)
+            print("Reading vocabulary information from file: {}".format(ARGS.vocabfile))
             vocab = read_vocab(ARGS.vocabfile)
-        print("Testing on data under {}".format(ARGS.testfolder))
+        message = "\nTesting on data under {}:\n".format(ARGS.testfolder)
+        separator = "-" * (len(message)-2)
+        print(message + separator + "\n")
         # Extract descriptors of test images
         test_labels = get_file_paths(ARGS.testfolder)
         # Extract descriptors of training images
@@ -263,6 +275,7 @@ def execute_pipeline():
                                          fast=ARGS.fast, percent=ARGS.percent)
         score = test(test_labels, descrs, slices, train_labels, train_bovws, vocab)
         print("Score achieved:", score)
+        print(separator)
 
 def get_current_config():
     global ARGS
@@ -284,12 +297,12 @@ def show_pipe():
     enum = {True: "Enabled", False: "Disabled"}
     s1, s2, s3 = enum[PIPE_MODE["train"]], enum[PIPE_MODE["x_valid"]], enum[PIPE_MODE["test"]]
     message = "Active pipeline modes:\n"
-    separator = "-" * (len(message)-1) + "\n"
-    message = message + separator +\
+    separator = "-" * (len(message)-1)
+    message = message + separator + "\n" +\
               ("1) Train: {}\n\n" +
                "   - CV : {}\n\n" +
                "2) Test : {}\n").format(s1, s2, s3) +\
-              separator
+              separator + "\n"
     print(message)
 
 def main():
