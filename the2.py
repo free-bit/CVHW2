@@ -28,8 +28,15 @@ vectorized_parse_label = np.vectorize(parse_label)
 # TESTED
 def sample_files(files, n):
     """Shuffle the list and return n random choices as list"""
-    if (not n or (n >= len(files))):
+    total = len(files)
+    # If n is not provided assume all files
+    if (not ARGS.fold) and (not n or (n >= total)):
+        print("WARNING: Using all files without shuffling\n")
         return files
+    # BUT in case of cross validation shuffle all files.
+    elif ARGS.fold and (not n or n > total):
+        print("WARNING: Using all files with shuffling\n")
+        n = total
     # Perform shuffling in-place
     np.random.shuffle(files)
     choices = np.random.choice(files, n, replace=False)
@@ -76,13 +83,13 @@ def get_SIFT_descriptor(image2D, **kwargs):
     else:
         # print("Using regular sift")
         frames, descrs = sift(image2D, compute_descriptor=True) # Might be useful: verbose=False
-    # TODO: debugging
-    if(np.any(np.isnan(descrs))):
-        print(descrs)
-        input("NaN detected, proceed?")
-    if(np.any(np.isinf(descrs))):
-        print(descrs)
-        input("inf detected, proceed?")
+    # For debugging purposes
+    # if(np.any(np.isnan(descrs))):
+    #     print(descrs)
+    #     input("NaN detected, proceed?")
+    # if(np.any(np.isinf(descrs))):
+    #     print(descrs)
+    #     input("inf detected, proceed?")
     return descrs
 
 def get_descriptors(file_names, **kwargs):
@@ -117,18 +124,21 @@ def get_descriptors(file_names, **kwargs):
     print(message + separator)
     return (descrs, slices)
 
-# TESTED
+# CHECKED
 def find_k_nearest(query_bovws, other_bovws, k):
     """Find indices of images with k-Nearest BoVWs from the database for one or more queries"""
+    print("Finding {}-nearest neighbour for {} queries among {} training files"
+          .format(k, query_bovws.shape[0], other_bovws.shape[0]))
     distances = np.apply_along_axis(lambda x: euclidean_distance(x, other_bovws, 1), 1, query_bovws)
     k_indices = np.apply_along_axis(np.argsort, 1, distances)[:, :k]
     # Select values in given indices row by row
     selected_dist = np.empty((0, k))
     for i in range(distances.shape[0]):
         selected_dist = np.vstack((selected_dist, distances[i, k_indices[i]]))
+    print("Done.\n")
     return k_indices, selected_dist
 
-# TESTED
+# CHECKED
 def find_accuracy(test_labels, train_labels, pred_indices):
     """
     Get ground truth and test labels.
@@ -136,16 +146,18 @@ def find_accuracy(test_labels, train_labels, pred_indices):
     In case of a tie get the minimum distanced label. (Counter class enables this behaviour.)
     Calculate and return accuracy.
     """
+    print("Calculating accuracy for {} queries and {} training files"
+          .format(len(test_labels), len(train_labels)))
     true_labels = vectorized_parse_label(test_labels)
     all_train_labels = vectorized_parse_label(train_labels)
     n_row, n_col = pred_indices.shape
     pred_labels = np.empty((0, n_col))
     for i in range(n_row):
-        print("Indices:",all_train_labels.shape,"pred_ind:",pred_indices[i])#TODO:
         pred_labels = np.vstack((pred_labels, all_train_labels[pred_indices[i]]))
     counters = np.apply_along_axis(Counter, 1, pred_labels)
     top_voted = [counted.most_common(1)[0][0] for counted in counters]
     accuracy = accuracy_score(true_labels, top_voted)
+    print("Score achieved: {}".format(accuracy))
     return accuracy
 
 def show_results():
@@ -153,6 +165,7 @@ def show_results():
 
 def find_bovws(descrs, slices, vocab):
     """Find BoVW representation of descriptors from one or more image"""
+    print("Finding BoVWs...")
     k = vocab.n_clusters
     # Get cluster index of each row descriptor vector and convert it to a row vector
     cluster_indices = vocab.predict(descrs)
@@ -162,6 +175,7 @@ def find_bovws(descrs, slices, vocab):
         ci = cluster_indices[slices[i] : slices[i+1]]
         bovw = np.bincount(ci, minlength=k)
         bovws = np.vstack((bovws, bovw))
+    print("BoVWs are constructed.\n")
     # Normalize each row vector
     return l1_normalize(bovws)
 
@@ -177,13 +191,14 @@ def build_vocab(descrs, k):
     print(("Based on features with shape:{} "+
            "building vocabulary with size: {}").format(descrs.shape, k))
     clusters = KMeans(n_clusters=k).fit(descrs) # sample_weight, get_params
+    # TODO: inverted indices might be removed but requires update on read and save!
     inv_indices = [None] * k
     for c_index in range(k):
         inv_indices[c_index] = np.where(clusters.labels_ == c_index)
     clusters.inv_indices_ = inv_indices
-    # TODO: Remove unused variable
+    # Remove unused variable
     del clusters.labels_
-    print("Vocabulary is constructed successfully.")
+    print("Vocabulary is constructed.\n")
     return clusters
 
 def create_file_name(type, ext_method, k, filecount):
@@ -232,64 +247,96 @@ def split_descrs(descrs, slices, fold_count):
     splits = np.array_split(splits, fold_count)
     return splits
 
-def setup_descrs_slices(descr_folds, fold_index):
+def setup_descrs_slices(descr_folds, test_fold_index):
+    """
+    Partition descr_folds based on the index of selected test fold.
+    For descr_folds structure see 'print_descr_fold_structure'
+    Returns: 
+    train_descrs, test_descrs: Descriptors to be used for training and test
+    train_slices, test_slices: Slices indicating boundaries of descriptors for each file
+    """
+    print("Setting up necessary variables for testing with fold-{}".format(test_fold_index))
     fold_count = len(descr_folds)
     # Grab test fold
-    test_descrs = descr_folds.pop(fold_index)
-    print(len(test_descrs))
+    test_fold = descr_folds[test_fold_index]
     test_slices = [0]
-    for descr in test_descrs:
-        test_slices.append(test_slices[-1] + descr.shape[0])
-    # Rest of the folds are training folds
-    train_descrs = np.array([]) #????
-    # TODO: Structure
-    print(type(descr_folds), len(descr_folds))
-    print(type(descr_folds[1]), descr_folds[1].shape)
-    print(type(descr_folds[1][0]), descr_folds[1][0].shape)
-    for descr_fold in descr_folds:
-        train_descrs += descr_fold
+    test_descrs = np.empty((0, 128))
+    for each_group in test_fold:
+        test_slices.append(test_slices[-1] + each_group.shape[0])
+        test_descrs = np.vstack((test_descrs, each_group))
+
+    # Rest are training folds
+    train_folds = descr_folds[:test_fold_index] + descr_folds[test_fold_index+1:]
+    train_descrs = np.empty((0, 128))
     train_slices = [0]
-    for descr in train_descrs:
-        train_slices.append(train_slices[-1] + descr.shape[0])
-    print(train_slices)
+    for train_fold in train_folds:
+        for each_group in train_fold:
+            train_slices.append(train_slices[-1] + each_group.shape[0])        
+            train_descrs = np.vstack((train_descrs, each_group))
+    print("Setup completed for testing with fold-{}\n".format(test_fold_index))
+    # print(test_slices) #TODO
+    # print(test_descrs.shape) #TODO
+    # print(train_slices) #TODO
+    # print(train_descrs.shape) #TODO
+    return train_descrs, train_slices, test_descrs, test_slices
+
+def print_descr_fold_structure(descr_folds):
+    """
+    Structure of descr_folds is as follows:
+    ---------------------------------------
+    type(descr_folds) -> list: Folds
+    len(descr_folds) -> k: Number of folds
+    
+    type(descr_folds[i]) -> np.array: Groups of descriptors 
+    descr_folds[i].shape -> (n,): Number of descriptor groups in the fold
+    
+    type(descr_folds[i][j] -> np.array: One group of descriptors 
+    descr_folds[i][j].shape -> (x, 128): Each group of descriptors belongs to a file
+    """
+    fold_count = len(descr_folds)
+    for i in range(fold_count):
+        group_count = descr_folds[i].shape[0]
+        message = "\nFold-{}\n".format(i)
+        separator = "-" * (len(message)-1)
+        info = "\nNumber of groups under this fold: {}\n".format(group_count)
+        print(message + separator + info)
+        for j in range(group_count):
+            print("Group-{}:".format(j))
+            print(descr_folds[i][j].shape,"\n")
+        print(separator)
 
 def x_validate(labels, descrs, slices):
     # Get folds
     fold_count = ARGS.fold
     label_folds = np.array_split(labels, fold_count)
     descr_folds = split_descrs(descrs, slices, fold_count)
-    #TODO
-    for i in range(len(slices)-1):#TODO
-        print(slices[i+1]-slices[i])#TODO
-    for i in range(fold_count):
-        print("Fold:",i)
-        for j in range(descr_folds[i].shape[0]):
-            print(descr_folds[i][j].shape,"\n")#TODO
-    setup_descrs_slices(descr_folds, 3)
-    input("Proceed?")#TODO
-    scores = np.empty((1, fold_count))
+
+    # For testing purposes
+    # print_descr_fold_structure(descr_folds) #TODO:
+    
+    # Keep score for each iteration
+    scores = np.empty(fold_count)
+
     # In each iteration pick one fold as test and the rest as training data 
     for i in range(fold_count):
+        # Setup parameters with respect to current fold
+        train_descrs, train_slices, test_descrs, test_slices = setup_descrs_slices(descr_folds, i)
+        
         # Build model on training folds
         train_labels = np.concatenate((*label_folds[:i], *label_folds[i+1:]))
-        # train_descrs = descr_splits[:i] descr_splits[i+1:]
-        print(train_descrs)#TODO
-        input("Proceed?")#TODO
-        
+        test_labels = label_folds[i]
+
         # Train on train folds
-        train_bovws, vocab = train(train_labels, train_descrs, slices)
+        train_bovws, vocab = train(train_labels, train_descrs, train_slices)
         
         # Test on test folds
-        message = "\nTesting with cross validation on test fold:\n"
+        message = "\nTesting with cross validation on test fold-{}:\n".format(i)
         separator = "-" * (len(message)-2)
-        print(message + separator + "\n")
+        print(message + separator)
         
-        test_labels = label_folds[i]
-        test_descrs = descr_folds[i]
-        scores[i] = test(test_labels, test_descrs, slices, train_labels, train_bovws, vocab)
-
-        print("Score achieved:", scores[i])
-        print(separator)
+        # Calculate score
+        scores[i] = test(test_labels, test_descrs, test_slices, train_labels, train_bovws, vocab)
+        print(separator + "\n")
 
     print("Average score:", np.mean(scores))
 
@@ -307,8 +354,11 @@ def execute_pipeline():
                                          fast=ARGS.fast, percent=ARGS.percent)
         # If cross validation mode enabled
         if (PIPE_MODE["x_valid"]):
-            print("Training with cross validation on data under {}:".format(ARGS.trainfolder))
+            message = "Training with cross validation on data under {}:\n".format(ARGS.trainfolder)
+            separator = "-" * (len(message)-2)
+            print(message + separator)
             x_validate(train_labels, descrs, slices)
+            print(separator)
         # Otherwise perform training without folds
         else:
             message = "\nTraining on data under {}:\n".format(ARGS.trainfolder)
