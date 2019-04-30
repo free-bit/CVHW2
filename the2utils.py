@@ -112,7 +112,7 @@ def arg_handler():
     # Train-specific
     train = parser.add_argument_group(title='train-specific')
     train.add_argument("--trainfolder",  help="Top level directory of training files", 
-                        metavar="FOLDER", type=check_path, required=enable_train)
+                       metavar="FOLDER", type=check_path, required=enable_train)
     train.add_argument("-nc", "--clusters",  help="Number of clusters (vocabulary size)", 
                        metavar="COUNT", type=check_positive, required=enable_train)
     train.add_argument("-nf", "--fold",  help="Number of folds for cross validation", 
@@ -122,13 +122,13 @@ def arg_handler():
     # Test-specific
     test = parser.add_argument_group(title='test-specific')
     test.add_argument("--testfolder",  help="Top level directory of test files", 
-                       metavar="FOLDER", type=check_path, required=enable_test)
+                      metavar="FOLDER", type=check_path, required=enable_test)
     test.add_argument("--bovwfile",  help="Saved BoVW file (required if pipe mode is test)", 
-                       metavar="FILE", required=enable_test_only)
+                      metavar="FILE", required=enable_test_only)
     test.add_argument("--vocabfile",  help="Saved vocabulary file (required if pipe mode is test)", 
-                       metavar="FILE", required=enable_test_only)
+                      metavar="FILE", required=enable_test_only)
     test.add_argument("-nk", "--knn",  help="k value for kNN", 
-                        metavar="COUNT", type=check_positive, required=enable_test)
+                      metavar="COUNT", type=check_positive, required=enable_test or enable_x_valid)
     args = parser.parse_args()
     # Print help if -h is used
     if args.help:

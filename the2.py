@@ -114,7 +114,6 @@ def get_descriptors(file_names, **kwargs):
             print("- Processed: {}% ({}/{})".format(value, count, total))
     t2 = time.time()
     message = "\nFeature extraction completed. Time elapsed: {:.4f}\n".format(t2-t1)
-    separator = "-" * (len(message)-1)
     print(message + separator)
     return (descrs, slices)
 
@@ -142,6 +141,7 @@ def find_accuracy(test_labels, train_labels, pred_indices):
     n_row, n_col = pred_indices.shape
     pred_labels = np.empty((0, n_col))
     for i in range(n_row):
+        print("Indices:",all_train_labels.shape,"pred_ind:",pred_indices[i])#TODO:
         pred_labels = np.vstack((pred_labels, all_train_labels[pred_indices[i]]))
     counters = np.apply_along_axis(Counter, 1, pred_labels)
     top_voted = [counted.most_common(1)[0][0] for counted in counters]
@@ -186,8 +186,8 @@ def build_vocab(descrs, k):
     print("Vocabulary is constructed successfully.")
     return clusters
 
-def create_file_name(type, k, filecount):
-    name = "{}_cluster{}_samples{}.txt".format(type, k, filecount)
+def create_file_name(type, ext_method, k, filecount):
+    name = "{}_{}_cluster{}_samples{}.txt".format(type, ext_method, k, filecount)
     return name
 
 def train(train_labels, train_descrs, train_slices):
@@ -197,11 +197,16 @@ def train(train_labels, train_descrs, train_slices):
     train_bovws = find_bovws(train_descrs, train_slices, vocab)
     # Save results (if specified)
     if (ARGS.save):
+        ext_method = "sift"
+        if (ARGS.dense):
+            ext_method = "d" + ext_method
+            if (ARGS.fast):
+                ext_method = "f" + ext_method
         # Save bovw
-        bovw_name = create_file_name("bovws", ARGS.clusters, train_bovws.shape[0])
+        bovw_name = create_file_name("bovws", ext_method, ARGS.clusters, train_bovws.shape[0])
         save_bovws(bovw_name, train_labels, train_bovws)
         # Save vocab
-        vocab_name = create_file_name("vocab", ARGS.clusters, train_bovws.shape[0])
+        vocab_name = create_file_name("vocab", ext_method, ARGS.clusters, train_bovws.shape[0])
         save_vocab(vocab_name, vocab)
         
     return train_bovws, vocab
@@ -218,20 +223,75 @@ def test(test_labels, test_descrs, test_slices, train_labels, train_bovws, vocab
         show_results()
     return score
 
+# Distribute descriptors of each file into their folds
+def split_descrs(descrs, slices, fold_count):
+    split_count = len(slices) - 1 
+    splits = [None] * split_count
+    for i in range(split_count):
+        splits[i] = descrs[slices[i] : slices[i+1]]
+    splits = np.array_split(splits, fold_count)
+    return splits
+
+def setup_descrs_slices(descr_folds, fold_index):
+    fold_count = len(descr_folds)
+    # Grab test fold
+    test_descrs = descr_folds.pop(fold_index)
+    print(len(test_descrs))
+    test_slices = [0]
+    for descr in test_descrs:
+        test_slices.append(test_slices[-1] + descr.shape[0])
+    # Rest of the folds are training folds
+    train_descrs = np.array([]) #????
+    # TODO: Structure
+    print(type(descr_folds), len(descr_folds))
+    print(type(descr_folds[1]), descr_folds[1].shape)
+    print(type(descr_folds[1][0]), descr_folds[1][0].shape)
+    for descr_fold in descr_folds:
+        train_descrs += descr_fold
+    train_slices = [0]
+    for descr in train_descrs:
+        train_slices.append(train_slices[-1] + descr.shape[0])
+    print(train_slices)
+
 def x_validate(labels, descrs, slices):
     # Get folds
-    label_folds = np.array_split(labels, ARGS.fold)
-    descr_folds = np.array_split(descrs, ARGS.fold)
+    fold_count = ARGS.fold
+    label_folds = np.array_split(labels, fold_count)
+    descr_folds = split_descrs(descrs, slices, fold_count)
+    #TODO
+    for i in range(len(slices)-1):#TODO
+        print(slices[i+1]-slices[i])#TODO
+    for i in range(fold_count):
+        print("Fold:",i)
+        for j in range(descr_folds[i].shape[0]):
+            print(descr_folds[i][j].shape,"\n")#TODO
+    setup_descrs_slices(descr_folds, 3)
+    input("Proceed?")#TODO
+    scores = np.empty((1, fold_count))
     # In each iteration pick one fold as test and the rest as training data 
-    for i in range(len(folds)):
+    for i in range(fold_count):
         # Build model on training folds
         train_labels = np.concatenate((*label_folds[:i], *label_folds[i+1:]))
-        train_descrs = np.concatenate((*descr_folds[:i], *descr_folds[i+1:]))
-        train(train_labels, train_descrs, slices)
+        # train_descrs = descr_splits[:i] descr_splits[i+1:]
+        print(train_descrs)#TODO
+        input("Proceed?")#TODO
+        
+        # Train on train folds
+        train_bovws, vocab = train(train_labels, train_descrs, slices)
+        
         # Test on test folds
+        message = "\nTesting with cross validation on test fold:\n"
+        separator = "-" * (len(message)-2)
+        print(message + separator + "\n")
+        
         test_labels = label_folds[i]
         test_descrs = descr_folds[i]
-        test(test_labels, test_descrs, slices)
+        scores[i] = test(test_labels, test_descrs, slices, train_labels, train_bovws, vocab)
+
+        print("Score achieved:", scores[i])
+        print(separator)
+
+    print("Average score:", np.mean(scores))
 
 def execute_pipeline():
     global PIPE_MODE
