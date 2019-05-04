@@ -78,22 +78,26 @@ def arg_handler():
                                      add_help=False)
     # Optional flags
     parser.add_argument("-h", "--help", help="Help message", action="store_true")
-    parser.add_argument("--save",  help="Save all outputs", 
-                       default=False, action="store_true")
-    parser.add_argument("--show",  help="Show images found", 
-                       default=False, action="store_true")
-    # Descriptor-related
+    # Optional flags: Descriptor-related
     parser.add_argument("-d", "--dense",  help="Use dsift (default: false)",
                        default=False, action="store_true")
     parser.add_argument("-cc", "--corners",  help="Number of keypoints/corners to be kept" + \
-                        "after each extraction", metavar="COUNT", type=check_positive, default=None)
+                        " after each extraction (default: all)", metavar="COUNT", 
+                        type=check_positive, default=None)
+    parser.add_argument("--stepsize",  help="The step size to be used in dense sift," + \
+                        " ignored if dense is false (default: 1)", metavar="STEP", 
+                        type=check_positive, default=1)
     parser.add_argument("--fast",  help="Use fast dsift, ignored if dense is false (default: false)",
                        default=False, action="store_true")
     parser.add_argument("--percent",  help="Progress in %% for feature extraction (default:10)", 
                        metavar="VALUE", default=10, type=check_percent)
-    # Debug mode (ignore all flags and run the script)
-    parser.add_argument("--debug", help="Debug (disable all flag checks)",
-                        default=False, action="store_true")
+    # Optional flags: Others
+    parser.add_argument("--save",  help="Save all outputs", 
+                       default=False, action="store_true")
+    # parser.add_argument("--show",  help="Show images found", 
+    #                    default=False, action="store_true")
+    # parser.add_argument("--debug", help="Debug (disable all flag checks)",
+    #                     default=False, action="store_true")
     # Logic for flags
     enable_exec = ("-h" not in sys.argv) and ("--help" not in sys.argv) \
                   and ("--debug" not in sys.argv)

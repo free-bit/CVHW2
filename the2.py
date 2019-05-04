@@ -87,8 +87,9 @@ def get_SIFT_descriptor(image2D, **kwargs):
     frames = descrs = None
     if dense:
         fast = kwargs.get('fast', False)
+        step = kwargs.get('step', 1)
         # print("Using dsift with fast:", fast)
-        frames, descrs = dsift(image2D, fast=fast) # Might be useful: verbose=False
+        frames, descrs = dsift(image2D, step=step, fast=fast) # Might be useful: verbose=False
     else:
         # print("Using regular sift")
         frames, descrs = sift(image2D, compute_descriptor=True) # Might be useful: verbose=False
@@ -385,8 +386,8 @@ def execute_pipeline():
         # Get train file paths (select c-many files randomly)
         train_labels = get_file_paths(ARGS.trainfolder, ARGS.filecount)
         # Extract descriptors of training images
-        descrs, slices = get_descriptors(train_labels, dense=ARGS.dense, 
-                                         fast=ARGS.fast, percent=ARGS.percent)
+        descrs, slices = get_descriptors(train_labels, dense=ARGS.dense, fast=ARGS.fast,
+                                         step=ARGS.stepsize, percent=ARGS.percent)
         # If cross validation mode enabled
         if (PIPE_MODE["x_valid"]):
             message = "Training with cross validation on data under {}:\n".format(ARGS.trainfolder)
@@ -416,8 +417,8 @@ def execute_pipeline():
         # Extract descriptors of test images
         test_labels = get_file_paths(ARGS.testfolder)
         # Extract descriptors of training images
-        descrs, slices = get_descriptors(test_labels, dense=ARGS.dense, 
-                                         fast=ARGS.fast, percent=ARGS.percent)
+        descrs, slices = get_descriptors(test_labels, dense=ARGS.dense, fast=ARGS.fast, 
+                                         step=ARGS.stepsize, percent=ARGS.percent)
         score = test(test_labels, descrs, slices, train_labels, train_bovws, vocab)
         print("Score achieved:", score)
         print(separator)
@@ -458,9 +459,6 @@ def main():
         show_current_config()
         show_pipe()
         execute_pipeline()
-    # Debugging
-    else:
-        pass
 
 if __name__ == "__main__":
     main()
