@@ -7,7 +7,7 @@ import time
 
 # Related third party imports
 from cyvlfeat.sift import dsift, sift
-from cyvlfeat.kmeans import kmeans # TODO: tmp
+# from cyvlfeat.kmeans import kmeans # TODO: tmp
 from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.neighbors import KNeighborsRegressor # TODO: tmp
 
@@ -41,6 +41,15 @@ def sample_files(files, n):
     np.random.shuffle(files)
     choices = np.random.choice(files, n, replace=False)
     return list(choices)
+
+def sample_descriptors(descrs):
+    corners = ARGS.corners
+    n_rows = descrs.shape[0]
+    if (not corners or corners >= n_rows):
+        return descrs
+    np.random.shuffle(descrs) # WARNING: Might be inefficient!
+    sample_indices = np.random.choice(n_rows, corners, replace=False)
+    return descrs[sample_indices]
 
 # TESTED
 def get_file_paths(folder, n=None):
@@ -90,7 +99,7 @@ def get_SIFT_descriptor(image2D, **kwargs):
     # if(np.any(np.isinf(descrs))):
     #     print(descrs)
     #     input("inf detected, proceed?")
-    return descrs
+    return sample_descriptors(descrs)
 
 def get_descriptors(file_names, **kwargs):
     """
@@ -138,7 +147,34 @@ def find_k_nearest(query_bovws, other_bovws, k):
     print("Done.\n")
     return k_indices, selected_dist
 
-# CHECKED
+# TODO: Implement
+def enhanced_find_accuracy(test_labels, train_labels, pred_indices):
+    """
+    Get ground truth and test labels.
+    Perform majority voting by using labels indicated by pred_indices to decide the label.
+    In case of a tie get the minimum distanced label. (Counter class enables this behaviour.)
+    Calculate and return accuracy.
+    """
+    print("Calculating accuracy for {} queries and {} training files"
+          .format(len(test_labels), len(train_labels)))
+    true_labels = vectorized_parse_label(test_labels)
+    all_train_labels = vectorized_parse_label(train_labels)
+    n_row, n_col = pred_indices.shape
+    pred_labels = np.empty((0, n_col))
+    for i in range(n_row):
+        pred_labels = np.vstack((pred_labels, all_train_labels[pred_indices[i]]))
+    counters = np.apply_along_axis(Counter, 1, pred_labels)
+    top_voted = [counted.most_common(1)[0][0] for counted in counters]
+    accuracy = accuracy_score(true_labels, top_voted)
+    # TODO: Continue
+    # print(accuracy1)
+    # c_mat = confusion_matrix(true_labels, top_voted)
+    # print(c_mat.shape)
+    # accuracy2 = (tp+tn)/(tn+fp+fn+tp)
+    # print(accuracy2)
+    print("Score achieved: {}".format(accuracy))
+    return accuracy
+
 def find_accuracy(test_labels, train_labels, pred_indices):
     """
     Get ground truth and test labels.
@@ -159,9 +195,6 @@ def find_accuracy(test_labels, train_labels, pred_indices):
     accuracy = accuracy_score(true_labels, top_voted)
     print("Score achieved: {}".format(accuracy))
     return accuracy
-
-def show_results():
-    pass
 
 def find_bovws(descrs, slices, vocab):
     """Find BoVW representation of descriptors from one or more image"""
@@ -201,8 +234,8 @@ def build_vocab(descrs, k):
     print("Vocabulary is constructed.\n")
     return clusters
 
-def create_file_name(type, ext_method, k, filecount):
-    name = "{}_{}_cluster{}_samples{}.txt".format(type, ext_method, k, filecount)
+def create_file_name(type, ext_method, n_corner, k, n_files):
+    name = "{}_{}_corners{}_cluster{}_files{}.txt".format(type, ext_method, n_corner, k, n_files)
     return name
 
 def train(train_labels, train_descrs, train_slices):
@@ -218,10 +251,12 @@ def train(train_labels, train_descrs, train_slices):
             if (ARGS.fast):
                 ext_method = "f" + ext_method
         # Save bovw
-        bovw_name = create_file_name("bovws", ext_method, ARGS.clusters, train_bovws.shape[0])
+        bovw_name = create_file_name("bovws", ext_method, train_descrs.shape[0],
+                                     ARGS.clusters, train_bovws.shape[0])
         save_bovws(bovw_name, train_labels, train_bovws)
         # Save vocab
-        vocab_name = create_file_name("vocab", ext_method, ARGS.clusters, train_bovws.shape[0])
+        vocab_name = create_file_name("vocab", ext_method, train_descrs.shape[0], 
+                                      ARGS.clusters, train_bovws.shape[0])
         save_vocab(vocab_name, vocab)
         
     return train_bovws, vocab

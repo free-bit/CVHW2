@@ -6,7 +6,7 @@ import sys
 # Related third party imports
 import matplotlib.pyplot as plt
 import numpy as np
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, MiniBatchKMeans
 
 # Local imports
 from PIL import Image
@@ -85,6 +85,8 @@ def arg_handler():
     # Descriptor-related
     parser.add_argument("-d", "--dense",  help="Use dsift (default: false)",
                        default=False, action="store_true")
+    parser.add_argument("-cc", "--corners",  help="Number of keypoints/corners to be kept" + \
+                        "after each extraction", metavar="COUNT", type=check_positive, default=None)
     parser.add_argument("--fast",  help="Use fast dsift, ignored if dense is false (default: false)",
                        default=False, action="store_true")
     parser.add_argument("--percent",  help="Progress in %% for feature extraction (default:10)", 
