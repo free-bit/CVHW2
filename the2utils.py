@@ -94,8 +94,8 @@ def arg_handler():
     # Optional flags: Others
     parser.add_argument("--save",  help="Save all outputs", 
                        default=False, action="store_true")
-    # parser.add_argument("--show",  help="Show images found", 
-    #                    default=False, action="store_true")
+    parser.add_argument("--cmshow",  help="Show confusion matrix", 
+                       default=False, action="store_true")
     # parser.add_argument("--debug", help="Debug (disable all flag checks)",
     #                     default=False, action="store_true")
     # Logic for flags
@@ -142,8 +142,8 @@ def arg_handler():
         return
 
     # In case of debugging ignore all flags
-    if args.debug:
-        return
+    # if args.debug:
+        # return
 
     # Update pipeline flags accordingly
     PIPE_MODE["train"] = enable_train
@@ -192,6 +192,12 @@ def l1_normalize(vec, axis=1):
     norm = norm.reshape((-1, 1))
     # Do not divide zero vectors
     return np.divide(vec, norm, where=norm!=0)
+
+def save_pred_labels(path_to_save, names, top_voted):
+    with open(path_to_save, "w+") as file:
+        for i in range(len(names)):
+            tmp = "{}: {}\n".format(names[i], top_voted[i])
+            file.write(tmp)
 
 # TESTED
 def save_bovws(path_to_save, file_names, bovws):
@@ -272,19 +278,75 @@ def read_bovws(path_to_read):
     bovws = np.array(bovws)
     return file_names, bovws
 
-# UNUSED: TESTED
-def save_centers(path_to_save, centers):
-    print("Saving cluster centers to the file: {}".format(path_to_save))
-    with open(path_to_save, "w+") as file:
-        header = "Cluster centers:"
-        np.savetxt(file, centers, header=header)
-    print("Saved.")
-# UNUSED: TESTED
-def save_inv_indices(path_to_save, inv_indices):
-    print("Saving inverted indices to the file: {}".format(path_to_save))
-    with open(path_to_save, "w+") as file:
-        header = "# Inverted indices:\n"
-        file.write(header)
-        for cluster in inv_indices:
-            np.savetxt(file, cluster, fmt="%d")
-    print("Saved.")
+# Note that this function is for visualizing the confusion matrix and taken from: 
+# https://scikit-learn.org/stable/auto_examples/model_selection/plot_confusion_matrix.html#sphx-glr-auto-examples-model-selection-plot-confusion-matrix-py
+def plot_confusion_matrix(c_mat, labels,
+                          normalize=False,
+                          title=None,
+                          cmap=plt.cm.Reds):
+    """
+    This function prints and plots the confusion matrix.
+    Normalization can be applied by setting `normalize=True`.
+    """
+    if not title:
+        if normalize:
+            title = 'Normalized confusion matrix'
+        else:
+            title = 'Confusion matrix, without normalization'
+
+    if normalize:
+        c_mat = c_mat.astype('float') / c_mat.sum(axis=1)[:, np.newaxis]
+        print("Normalized confusion matrix")
+    else:
+        print('Confusion matrix, without normalization')
+
+    print(c_mat)
+
+    fig, ax = plt.subplots()
+    im = ax.imshow(c_mat, interpolation='nearest', cmap=cmap)
+    ax.figure.colorbar(im, ax=ax)
+    # Show all ticks...
+    ax.set(xticks=np.arange(c_mat.shape[1]),
+           yticks=np.arange(c_mat.shape[0]),
+           # ... and label them with the respective list entries
+           xticklabels=labels, yticklabels=labels,
+           title=title,
+           ylabel='True label',
+           xlabel='Predicted label')
+
+    # Rotate the tick labels and set their alignment.
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right",
+             rotation_mode="anchor")
+
+    # Loop over data dimensions and create text annotations.
+    fmt = '.2f' if normalize else 'd'
+    thresh = c_mat.max() / 2.
+    for i in range(c_mat.shape[0]):
+        for j in range(c_mat.shape[1]):
+            ax.text(j, i, format(c_mat[i, j], fmt),
+                    ha="center", va="center",
+                    color="white" if c_mat[i, j] > thresh else "black")
+    fig.tight_layout()
+    return ax
+
+#UNUSED
+def find_accuracy_old(test_labels, train_labels, pred_indices):
+    """
+    Get ground truth and test labels.
+    Perform majority voting by using labels indicated by pred_indices to decide the label.
+    In case of a tie get the minimum distanced label. (Counter class enables this behaviour.)
+    Calculate and return accuracy.
+    """
+    print("Calculating accuracy for {} queries and {} training files"
+          .format(len(test_labels), len(train_labels)))
+    true_labels = vectorized_parse_label(test_labels)
+    all_train_labels = vectorized_parse_label(train_labels)
+    n_row, n_col = pred_indices.shape
+    pred_labels = np.empty((0, n_col))
+    for i in range(n_row):
+        pred_labels = np.vstack((pred_labels, all_train_labels[pred_indices[i]]))
+    counters = np.apply_along_axis(Counter, 1, pred_labels)
+    top_voted = [counted.most_common(1)[0][0] for counted in counters]
+    accuracy = accuracy_score(true_labels, top_voted)
+    print("Score achieved: {}".format(accuracy))
+    return accuracy

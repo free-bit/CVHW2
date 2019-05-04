@@ -16,6 +16,7 @@ from the2utils import *
 
 # Constants & global variables
 ARGS = None
+GIVE_WARNING = True
 
 # TESTED
 # Per item function to find label
@@ -24,6 +25,12 @@ parse_label = lambda path : re.search(rxp_label, path).group(1)
 
 # Vectorized version
 vectorized_parse_label = np.vectorize(parse_label)
+
+parse_name = lambda path : path[path.rfind("/")+1:]
+
+# Vectorized version
+vectorized_parse_name = np.vectorize(parse_name)
+
 
 # TESTED
 def sample_files(files, n):
@@ -43,9 +50,14 @@ def sample_files(files, n):
     return list(choices)
 
 def sample_descriptors(descrs):
+    global GIVE_WARNING
     corners = ARGS.corners
     n_rows = descrs.shape[0]
     if (not corners or corners >= n_rows):
+        if(GIVE_WARNING):
+            print("\nWARNING: Using all descriptors ({}) extracted without shuffling\n"
+                  .format(n_rows))
+            GIVE_WARNING = False
         return descrs
     np.random.shuffle(descrs) # WARNING: Might be inefficient!
     sample_indices = np.random.choice(n_rows, corners, replace=False)
@@ -148,40 +160,13 @@ def find_k_nearest(query_bovws, other_bovws, k):
     print("Done.\n")
     return k_indices, selected_dist
 
-# TODO: Implement
-def enhanced_find_accuracy(test_labels, train_labels, pred_indices):
-    """
-    Get ground truth and test labels.
-    Perform majority voting by using labels indicated by pred_indices to decide the label.
-    In case of a tie get the minimum distanced label. (Counter class enables this behaviour.)
-    Calculate and return accuracy.
-    """
-    print("Calculating accuracy for {} queries and {} training files"
-          .format(len(test_labels), len(train_labels)))
-    true_labels = vectorized_parse_label(test_labels)
-    all_train_labels = vectorized_parse_label(train_labels)
-    n_row, n_col = pred_indices.shape
-    pred_labels = np.empty((0, n_col))
-    for i in range(n_row):
-        pred_labels = np.vstack((pred_labels, all_train_labels[pred_indices[i]]))
-    counters = np.apply_along_axis(Counter, 1, pred_labels)
-    top_voted = [counted.most_common(1)[0][0] for counted in counters]
-    accuracy = accuracy_score(true_labels, top_voted)
-    # TODO: Continue
-    # print(accuracy1)
-    # c_mat = confusion_matrix(true_labels, top_voted)
-    # print(c_mat.shape)
-    # accuracy2 = (tp+tn)/(tn+fp+fn+tp)
-    # print(accuracy2)
-    print("Score achieved: {}".format(accuracy))
-    return accuracy
-
+# TESTED
 def find_accuracy(test_labels, train_labels, pred_indices):
     """
     Get ground truth and test labels.
     Perform majority voting by using labels indicated by pred_indices to decide the label.
     In case of a tie get the minimum distanced label. (Counter class enables this behaviour.)
-    Calculate and return accuracy.
+    Calculate and return accuracy with predicted labels.
     """
     print("Calculating accuracy for {} queries and {} training files"
           .format(len(test_labels), len(train_labels)))
@@ -193,9 +178,19 @@ def find_accuracy(test_labels, train_labels, pred_indices):
         pred_labels = np.vstack((pred_labels, all_train_labels[pred_indices[i]]))
     counters = np.apply_along_axis(Counter, 1, pred_labels)
     top_voted = [counted.most_common(1)[0][0] for counted in counters]
-    accuracy = accuracy_score(true_labels, top_voted)
+    labels = np.unique(all_train_labels)
+    # print("All:", labels)
+    # print("True:", true_labels)
+    # print("Predicted:", top_voted)
+    c_mat = confusion_matrix(true_labels, top_voted, labels=labels)
+    accuracy = np.trace(c_mat) / np.sum(c_mat)
+    np.set_printoptions(precision=2)
+    if (ARGS.cmshow):
+        # Plot non-normalized confusion matrix
+        plot_confusion_matrix(c_mat, labels, title='Confusion matrix')
+        plt.show()
     print("Score achieved: {}".format(accuracy))
-    return accuracy
+    return accuracy, top_voted
 
 def find_bovws(descrs, slices, vocab):
     """Find BoVW representation of descriptors from one or more image"""
@@ -235,8 +230,14 @@ def build_vocab(descrs, k):
     print("Vocabulary is constructed.\n")
     return clusters
 
-def create_file_name(type, ext_method, n_corner, k, n_files):
-    name = "{}_{}_corners{}_cluster{}_files{}.txt".format(type, ext_method, n_corner, k, n_files)
+def create_file_name(type, n_files):
+    ext_method = "sift"
+    if (ARGS.dense):
+        ext_method = "d" + ext_method + "_step{}".format(ARGS.stepsize)
+        if (ARGS.fast):
+            ext_method = "f" + ext_method
+    name = "{}_{}_corners{}_cluster{}_files{}.txt".format(type, ext_method, ARGS.corners, 
+                                                          ARGS.clusters, n_files)
     return name
 
 def train(train_labels, train_descrs, train_slices):
@@ -246,18 +247,11 @@ def train(train_labels, train_descrs, train_slices):
     train_bovws = find_bovws(train_descrs, train_slices, vocab)
     # Save results (if specified)
     if (ARGS.save):
-        ext_method = "sift"
-        if (ARGS.dense):
-            ext_method = "d" + ext_method
-            if (ARGS.fast):
-                ext_method = "f" + ext_method
         # Save bovw
-        bovw_name = create_file_name("bovws", ext_method, train_descrs.shape[0],
-                                     ARGS.clusters, train_bovws.shape[0])
+        bovw_name = create_file_name("bovws", train_bovws.shape[0])
         save_bovws(bovw_name, train_labels, train_bovws)
         # Save vocab
-        vocab_name = create_file_name("vocab", ext_method, train_descrs.shape[0], 
-                                      ARGS.clusters, train_bovws.shape[0])
+        vocab_name = create_file_name("vocab", train_bovws.shape[0])
         save_vocab(vocab_name, vocab)
         
     return train_bovws, vocab
@@ -268,10 +262,13 @@ def test(test_labels, test_descrs, test_slices, train_labels, train_bovws, vocab
     # Find k nearest neighbours
     pred_indices, selected_dist = find_k_nearest(test_bovws, train_bovws, ARGS.knn)
     # Calculate accuracy
-    score = find_accuracy(test_labels, train_labels, pred_indices)
-    # Show results
-    if ARGS.show:
-        show_results()
+    score, top_voted = find_accuracy(test_labels, train_labels, pred_indices)
+    # Save predictions
+    if (ARGS.save):
+        ARGS.clusters = vocab.n_clusters
+        result_name = create_file_name("results_knn{}".format(ARGS.knn), train_bovws.shape[0])
+        test_names = vectorized_parse_name(test_labels)
+        save_pred_labels(result_name, test_names, top_voted)
     return score
 
 # Distribute descriptors of each file into their folds
@@ -419,8 +416,7 @@ def execute_pipeline():
         # Extract descriptors of training images
         descrs, slices = get_descriptors(test_labels, dense=ARGS.dense, fast=ARGS.fast, 
                                          step=ARGS.stepsize, percent=ARGS.percent)
-        score = test(test_labels, descrs, slices, train_labels, train_bovws, vocab)
-        print("Score achieved:", score)
+        test(test_labels, descrs, slices, train_labels, train_bovws, vocab)
         print(separator)
 
 def get_current_config():
