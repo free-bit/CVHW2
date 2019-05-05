@@ -20,7 +20,7 @@ GIVE_WARNING = True
 
 # TESTED
 # Per item function to find label
-rxp_label = r'^.*/(.*)/\d*\.\w*$'
+rxp_label = r'^.*/(.*)/(\d|\w)*\.\w*$'
 parse_label = lambda path : re.search(rxp_label, path).group(1)
 
 # Vectorized version
@@ -161,36 +161,42 @@ def find_k_nearest(query_bovws, other_bovws, k):
     return k_indices, selected_dist
 
 # TESTED
-def find_accuracy(test_labels, train_labels, pred_indices):
+def predict_labels(train_labels, pred_indices):
     """
-    Get ground truth and test labels.
     Perform majority voting by using labels indicated by pred_indices to decide the label.
     In case of a tie get the minimum distanced label. (Counter class enables this behaviour.)
-    Calculate and return accuracy with predicted labels.
+    Return top voted predictions and set of train labels (all unique train labels)
     """
-    print("Calculating accuracy for {} queries and {} training files"
-          .format(len(test_labels), len(train_labels)))
-    true_labels = vectorized_parse_label(test_labels)
-    all_train_labels = vectorized_parse_label(train_labels)
+    n_train = len(train_labels)
     n_row, n_col = pred_indices.shape
+    print("Predict labels of {}-test images based on {}-trained labels...".format(n_row, n_train))
+    all_train_labels = vectorized_parse_label(train_labels)
     pred_labels = np.empty((0, n_col))
     for i in range(n_row):
         pred_labels = np.vstack((pred_labels, all_train_labels[pred_indices[i]]))
     counters = np.apply_along_axis(Counter, 1, pred_labels)
-    top_voted = [counted.most_common(1)[0][0] for counted in counters]
-    labels = np.unique(all_train_labels)
-    # print("All:", labels)
-    # print("True:", true_labels)
-    # print("Predicted:", top_voted)
-    c_mat = confusion_matrix(true_labels, top_voted, labels=labels)
+    top_voted_preds = [counted.most_common(1)[0][0] for counted in counters]
+    set_of_labels = np.unique(all_train_labels)
+    print("Done.")
+    return top_voted_preds, set_of_labels
+
+# TESTED
+def find_accuracy(test_names, predicted, set_of_labels):
+    """
+    Get known label set and test file names (parse them to obtain ground truth.)
+    Calculate and return accuracy.
+    """
+    print("Calculating accuracy for {} queries:".format(len(test_names)))
+    ground_truth = vectorized_parse_label(test_names)
+    c_mat = confusion_matrix(ground_truth, predicted, labels=set_of_labels)
     accuracy = np.trace(c_mat) / np.sum(c_mat)
     np.set_printoptions(precision=2)
     if (ARGS.cmshow):
         # Plot non-normalized confusion matrix
-        plot_confusion_matrix(c_mat, labels, title='Confusion matrix')
+        plot_confusion_matrix(c_mat, set_of_labels, title='Confusion matrix')
         plt.show()
     print("Score achieved: {}".format(accuracy))
-    return accuracy, top_voted
+    return accuracy
 
 def find_bovws(descrs, slices, vocab):
     """Find BoVW representation of descriptors from one or more image"""
@@ -261,14 +267,18 @@ def test(test_labels, test_descrs, test_slices, train_labels, train_bovws, vocab
     test_bovws = find_bovws(test_descrs, test_slices, vocab)
     # Find k nearest neighbours
     pred_indices, selected_dist = find_k_nearest(test_bovws, train_bovws, ARGS.knn)
-    # Calculate accuracy
-    score, top_voted = find_accuracy(test_labels, train_labels, pred_indices)
+    # Predict labels
+    predicted, set_of_labels = predict_labels(train_labels, pred_indices)
+    # Calculate accuracy if prediction only option is specified
+    score = None
+    if (not ARGS.predonly):
+        score = find_accuracy(test_labels, predicted, set_of_labels)
     # Save predictions
     if (ARGS.save):
         ARGS.clusters = vocab.n_clusters
-        result_name = create_file_name("results_knn{}".format(ARGS.knn), train_bovws.shape[0])
+        result_filename = create_file_name("results_knn{}".format(ARGS.knn), train_bovws.shape[0])
         test_names = vectorized_parse_name(test_labels)
-        save_pred_labels(result_name, test_names, top_voted)
+        save_pred_labels(result_filename, test_names, predicted)
     return score
 
 # Distribute descriptors of each file into their folds

@@ -96,6 +96,9 @@ def arg_handler():
                        default=False, action="store_true")
     parser.add_argument("--cmshow",  help="Show confusion matrix", 
                        default=False, action="store_true")
+    parser.add_argument("--predonly",  help="If there is no ground truth, only make prediction," + \
+                        " do NOT calculate accuracy (default: false)", default=False, 
+                        action="store_true")
     # parser.add_argument("--debug", help="Debug (disable all flag checks)",
     #                     default=False, action="store_true")
     # Logic for flags
